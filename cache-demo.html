@@ -22,6 +22,13 @@ const CACHE_LINE = 4; // 4 elements per "cache line" for visualization
 const CACHE_CAPACITY = 8; // キャッシュが保持できるライン数。これを超えると最も古いラインから LRU で追い出す
                           // （列優先の再利用距離 12 ラインより小さいので、列優先は再利用前に追い出されミスが頻発する）
 
+// アニメーション速度プリセット（1ステップあたりの待ち時間 ms）
+const SPEEDS = [
+  { label: "ゆっくり", ms: 260 },
+  { label: "ふつう", ms: 110 },
+  { label: "速い", ms: 25 },
+];
+
 const palette = {
   bg: "#0f1117",
   surface: "#1a1d27",
@@ -266,6 +273,9 @@ function CacheDemo() {
   const [benchRunning, setBenchRunning] = useState(false);
   const [benchSize, setBenchSize] = useState(2048);
   const cancelRef = useRef(false);
+  const [speed, setSpeed] = useState(SPEEDS[0].ms); // 既定はゆっくり（コードを読めるように）
+  const speedRef = useRef(SPEEDS[0].ms);            // 実行中でも即反映するため ref で保持
+  const setSpeedBoth = (ms) => { setSpeed(ms); speedRef.current = ms; };
 
   const resetAnim = () => {
     setRowStates({});
@@ -307,7 +317,7 @@ function CacheDemo() {
       setRowStates({ ...rStates });
       setRowCurrent(idx);
       setRowStats({ hits: rHits, misses: rMisses });
-      if (i % 2 === 0) await delay(20);
+      await delay(speedRef.current);
     }
     setRowCurrent(-1);
 
@@ -329,7 +339,7 @@ function CacheDemo() {
       setColStates({ ...cStates });
       setColCurrent(idx);
       setColStats({ hits: cHits, misses: cMisses });
-      if (i % 2 === 0) await delay(20);
+      await delay(speedRef.current);
     }
     setColCurrent(-1);
     setAnimating(false);
@@ -390,15 +400,31 @@ function CacheDemo() {
           </span>
         </div>
 
-        {/* Animation button */}
-        <button onClick={startAnimation} style={{
-          padding: "8px 20px", fontSize: 13, fontWeight: 600,
-          background: animating ? palette.miss : palette.accent,
-          color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
-          marginBottom: 16,
+        {/* Animation button + speed control */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          flexWrap: "wrap", marginBottom: 16,
         }}>
-          {animating ? "■ 停止" : "▶ アニメーション開始"}
-        </button>
+          <button onClick={startAnimation} style={{
+            padding: "8px 20px", fontSize: 13, fontWeight: 600,
+            background: animating ? palette.miss : palette.accent,
+            color: "#fff", border: "none", borderRadius: 6, cursor: "pointer",
+          }}>
+            {animating ? "■ 停止" : "▶ アニメーション開始"}
+          </button>
+          <span style={{ fontSize: 12, color: palette.textDim, marginLeft: 4 }}>速度:</span>
+          {SPEEDS.map(s => (
+            <button key={s.label} onClick={() => setSpeedBoth(s.ms)} style={{
+              padding: "5px 12px", fontSize: 12, fontWeight: 500,
+              background: speed === s.ms ? palette.accent : palette.surfaceAlt,
+              color: speed === s.ms ? "#fff" : palette.textDim,
+              border: `1px solid ${speed === s.ms ? palette.accent : palette.border}`,
+              borderRadius: 4, cursor: "pointer",
+            }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
 
         {/* Live synced code */}
         <LiveCode phase={livePhase} r={liveR} c={liveC} idx={liveIdx} state={liveState} />
