@@ -19,6 +19,8 @@ const { useState, useRef, useCallback, useEffect } = React;
 
 const GRID = 12;
 const CACHE_LINE = 4; // 4 elements per "cache line" for visualization
+const CACHE_CAPACITY = 8; // キャッシュが保持できるライン数。これを超えると最も古いラインから LRU で追い出す
+                          // （列優先の再利用距離 12 ラインより小さいので、列優先は再利用前に追い出されミスが頻発する）
 
 const palette = {
   bg: "#0f1117",
@@ -52,6 +54,26 @@ function buildAccessOrder(mode) {
 
 function getCacheLineStart(flatIdx) {
   return Math.floor(flatIdx / CACHE_LINE) * CACHE_LINE;
+}
+
+// 容量つき LRU キャッシュ。access(line) はヒットなら true、ミスなら false を返す。
+// 容量を超えたら最も長く使われていないライン（Map の先頭）を追い出す。
+function makeLruCache(capacity) {
+  const map = new Map(); // key=ライン先頭アドレス, 挿入/更新順が LRU 順を表す
+  return {
+    access(line) {
+      if (map.has(line)) {        // ヒット：最近使ったので末尾へ移動
+        map.delete(line);
+        map.set(line, 1);
+        return true;
+      }
+      map.set(line, 1);           // ミス：読み込む
+      if (map.size > capacity) {  // あふれたら最古を追い出す
+        map.delete(map.keys().next().value);
+      }
+      return false;
+    },
+  };
 }
 
 function Cell({ state, isCurrent }) {
@@ -207,18 +229,17 @@ function CacheDemo() {
     const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
     // Row-major animation
-    const rowLoaded = new Set();
+    const rowCache = makeLruCache(CACHE_CAPACITY);
     for (let i = 0; i < rowOrder.length; i++) {
       if (cancelRef.current) break;
       const { idx } = rowOrder[i];
       const lineStart = getCacheLineStart(idx);
-      if (rowLoaded.has(lineStart)) {
+      if (rowCache.access(lineStart)) {
         rStates[idx] = "hit";
         rHits++;
       } else {
         rStates[idx] = "miss";
         rMisses++;
-        rowLoaded.add(lineStart);
       }
       setRowStates({ ...rStates });
       setRowCurrent(idx);
@@ -230,18 +251,17 @@ function CacheDemo() {
     await delay(300);
 
     // Column-major animation
-    const colLoaded = new Set();
+    const colCache = makeLruCache(CACHE_CAPACITY);
     for (let i = 0; i < colOrder.length; i++) {
       if (cancelRef.current) break;
       const { idx } = colOrder[i];
       const lineStart = getCacheLineStart(idx);
-      if (colLoaded.has(lineStart)) {
+      if (colCache.access(lineStart)) {
         cStates[idx] = "hit";
         cHits++;
       } else {
         cStates[idx] = "miss";
         cMisses++;
-        colLoaded.add(lineStart);
       }
       setColStates({ ...cStates });
       setColCurrent(idx);
@@ -335,7 +355,9 @@ function CacheDemo() {
           <strong style={{ color: palette.text }}>なぜ差が出る？</strong><br />
           C/C++ の2次元配列はメモリ上で<strong style={{ color: palette.text }}>行優先（Row-major）</strong>に並んでいる。
           CPUがメモリを読む時、1要素だけでなく <strong style={{ color: palette.text }}>キャッシュライン（64バイト = 連続16個のfloat）</strong>単位でまとめて読み込む。
-          行優先でアクセスすると次の要素はすでにキャッシュにあるが、列優先だと毎回別のキャッシュラインに飛ぶためミスが頻発する。
+          行優先でアクセスすると次の要素は<strong style={{ color: palette.text }}>同じキャッシュラインの中</strong>にあるためヒットする（空間的局所性）。
+          一方、列優先だと毎回別のラインに飛ぶ。さらにキャッシュ<strong style={{ color: palette.text }}>容量は有限</strong>（このデモでは {CACHE_CAPACITY} ライン分）なので、
+          一度読んだラインが<strong style={{ color: palette.text }}>再び使われる前に追い出されて</strong>しまい、ほぼ毎回ミスになる。
         </div>
 
         {/* Benchmark section */}
