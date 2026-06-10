@@ -24,9 +24,9 @@ const CACHE_CAPACITY = 8; // キャッシュが保持できるライン数。こ
 
 // アニメーション速度プリセット（1ステップあたりの待ち時間 ms）
 const SPEEDS = [
-  { label: "ゆっくり", ms: 260 },
-  { label: "ふつう", ms: 110 },
-  { label: "速い", ms: 25 },
+  { label: "ゆっくり", ms: 450 },
+  { label: "ふつう", ms: 160 },
+  { label: "速い", ms: 30 },
 ];
 
 const palette = {
@@ -203,60 +203,80 @@ function Bar({ value, max, color, label, time }) {
   );
 }
 
-// アニメーションと同期して、いま実行中のループ・変数・キャッシュ判定を表示する
-function LiveCode({ phase, r, c, idx, state }) {
-  const idle = phase == null;
-  const isRow = phase === "row";
-  const tone = idle ? palette.textDim : isRow ? palette.hit : palette.miss;
-  const title = idle ? "待機中" : isRow ? "✅ 行優先を実行中" : "❌ 列優先を実行中";
+// 1フェーズ分のコードと結果を表示する（実行中はハイライト、終了後は最終結果を表示）
+function CodeColumn({ kind, active, live, stats, showStats }) {
+  const isRow = kind === "row";
+  const tone = isRow ? palette.hit : palette.miss;
+  const dim = active ? 1 : 0.92;
   const num = (v) => <b style={{ color: tone }}>{v}</b>;
 
   return (
     <div style={{
+      flex: 1, minWidth: 240, opacity: dim,
       background: palette.surfaceAlt,
-      border: `1px solid ${idle ? palette.border : tone}`,
-      borderRadius: 8, padding: 14, marginBottom: 20,
-      fontFamily: "monospace", fontSize: 12.5, lineHeight: 1.8,
-      minHeight: 96,
+      border: `1px solid ${active ? tone : palette.border}`,
+      boxShadow: active ? `0 0 0 1px ${tone}` : "none",
+      borderRadius: 8, padding: 12,
+      fontFamily: "monospace", fontSize: 12.5, lineHeight: 1.75,
     }}>
       <div style={{
-        color: tone, fontWeight: 700, marginBottom: 8,
+        color: tone, fontWeight: 700, marginBottom: 6,
         fontFamily: "'Inter', -apple-system, sans-serif", fontSize: 12,
       }}>
-        {title}
+        {isRow ? "✅ 行優先" : "❌ 列優先"}{active ? " — 実行中" : ""}
       </div>
 
-      {idle ? (
-        <div style={{ color: palette.textDim, fontFamily: "'Inter', -apple-system, sans-serif" }}>
-          「▶ アニメーション開始」を押すと、ループ変数 r・c の動きと、各アクセスの
-          キャッシュ判定（ヒット / ミス）を 1 ステップずつ表示します。
-        </div>
-      ) : (
-        <div style={{ color: palette.text }}>
-          <div style={{ color: palette.textDim }}>
-            {isRow ? "for (r = 0; r < 12; r++)" : "for (c = 0; c < 12; c++)"}
-            {"  "}<span style={{ color: tone }}>// r = {num(r)}</span>
-          </div>
-          <div style={{ paddingLeft: 18, color: palette.textDim }}>
-            {isRow ? "for (c = 0; c < 12; c++)" : "for (r = 0; r < 12; r++)"}
-            {"  "}<span style={{ color: palette.current }}>
-              // {isRow ? "c" : "r"} = {num(isRow ? c : r)} ← {isRow ? "連続変化＝メモリも連続" : "+12 ずつ飛ぶ＝毎回別ライン"}
-            </span>
-          </div>
-          <div style={{ paddingLeft: 36 }}>
-            sum += arr[{num(r)}*12 + {num(c)}]
-            {"  →  "}arr[{num(idx)}]
-            {state && (
-              <span style={{
-                marginLeft: 10, fontWeight: 700,
-                color: state === "hit" ? palette.hit : palette.miss,
-              }}>
-                {state === "hit" ? "ヒット ✓" : "ミス ✗"}
-              </span>
-            )}
-          </div>
+      <div style={{ color: palette.textDim }}>
+        {isRow ? "for (r = 0; r < 12; r++)" : "for (c = 0; c < 12; c++)"}
+        {live && <span style={{ color: tone }}>{"  "}// {isRow ? "r" : "c"} = {num(isRow ? live.r : live.c)}</span>}
+      </div>
+      <div style={{ paddingLeft: 18, color: palette.textDim }}>
+        {isRow ? "  for (c = 0; c < 12; c++)" : "  for (r = 0; r < 12; r++)"}
+        {live
+          ? <span style={{ color: palette.current }}>{"  "}// {isRow ? "c" : "r"} = {num(isRow ? live.c : live.r)} ← {isRow ? "連続" : "+12 飛び"}</span>
+          : <span style={{ color: palette.textDim }}>{"  "}// {isRow ? "連続変化＝メモリ連続" : "+12 ずつ飛ぶ＝別ライン"}</span>}
+      </div>
+      <div style={{ paddingLeft: 36, color: palette.text }}>
+        sum += arr[{live ? num(live.r) : "r"}*12 + {live ? num(live.c) : "c"}];
+        {live && <>{"  →  "}arr[{num(live.idx)}]
+          {live.state && <span style={{ marginLeft: 8, fontWeight: 700, color: live.state === "hit" ? palette.hit : palette.miss }}>
+            {live.state === "hit" ? "ヒット ✓" : "ミス ✗"}
+          </span>}
+        </>}
+      </div>
+
+      {showStats && (
+        <div style={{ marginTop: 8, borderTop: `1px solid ${palette.border}`, paddingTop: 6 }}>
+          ヒット <b style={{ color: palette.hit }}>{stats ? stats.hits : 0}</b>
+          {"  /  "}ミス <b style={{ color: palette.miss }}>{stats ? stats.misses : 0}</b>
         </div>
       )}
+    </div>
+  );
+}
+
+// アニメーションと同期：常に2つのコードを表示し、実行中はアクティブ列をハイライト、
+// 実行後は両列に最終結果（ヒット/ミス）を残す
+function LiveCode({ phase, r, c, idx, state, animating, rowStats, colStats }) {
+  const started = animating || rowStats != null || colStats != null;
+  const rowLive = phase === "row" ? { r, c, idx, state } : null;
+  const colLive = phase === "col" ? { r, c, idx, state } : null;
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      {!started && (
+        <div style={{
+          fontSize: 12, color: palette.textDim, marginBottom: 8,
+          fontFamily: "'Inter', -apple-system, sans-serif", lineHeight: 1.6,
+        }}>
+          「▶ アニメーション開始」で下の2つのループを1ステップずつ実行します。
+          ループ変数とキャッシュ判定（ヒット / ミス）がここに表示され、実行後も結果が残ります。
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <CodeColumn kind="row" active={phase === "row"} live={rowLive} stats={rowStats} showStats={started} />
+        <CodeColumn kind="col" active={phase === "col"} live={colLive} stats={colStats} showStats={started} />
+      </div>
     </div>
   );
 }
@@ -427,7 +447,10 @@ function CacheDemo() {
         </div>
 
         {/* Live synced code */}
-        <LiveCode phase={livePhase} r={liveR} c={liveC} idx={liveIdx} state={liveState} />
+        <LiveCode
+          phase={livePhase} r={liveR} c={liveC} idx={liveIdx} state={liveState}
+          animating={animating} rowStats={rowStats} colStats={colStats}
+        />
 
         {/* Grids */}
         <div style={{
@@ -533,36 +556,6 @@ function CacheDemo() {
               </div>
             </div>
           )}
-        </div>
-
-        {/* Code comparison */}
-        <div style={{
-          marginTop: 24, background: palette.surface, borderRadius: 8,
-          border: `1px solid ${palette.border}`, padding: 20,
-        }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: "0 0 12px" }}>
-            コード比較
-          </h2>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <pre style={{
-              flex: 1, minWidth: 240, margin: 0, padding: 12,
-              background: palette.surfaceAlt, borderRadius: 6,
-              fontSize: 11, lineHeight: 1.6, color: palette.hit,
-              overflow: "auto", border: `1px solid ${palette.border}`,
-            }}>{`// ✅ 行優先（高速）
-for (r = 0; r < N; r++)
-  for (c = 0; c < N; c++)
-    sum += arr[r * N + c];`}</pre>
-            <pre style={{
-              flex: 1, minWidth: 240, margin: 0, padding: 12,
-              background: palette.surfaceAlt, borderRadius: 6,
-              fontSize: 11, lineHeight: 1.6, color: palette.miss,
-              overflow: "auto", border: `1px solid ${palette.border}`,
-            }}>{`// ❌ 列優先（低速）
-for (c = 0; c < N; c++)
-  for (r = 0; r < N; r++)
-    sum += arr[r * N + c];`}</pre>
-          </div>
         </div>
 
         <p style={{
