@@ -76,7 +76,7 @@ function makeLruCache(capacity) {
   };
 }
 
-function Cell({ state, isCurrent }) {
+function Cell({ state, isCurrent, lineEnd }) {
   const bg =
     isCurrent ? palette.current :
     state === "hit" ? palette.hit :
@@ -95,6 +95,8 @@ function Cell({ state, isCurrent }) {
       color: isCurrent ? "#000" : state ? "#fff" : palette.textDim,
       fontWeight: isCurrent ? 700 : 400,
       fontFamily: "monospace",
+      // 4要素ごと（=1キャッシュライン）の右端に区切り線を引く（隙間を埋めるだけでレイアウトは不変）
+      boxShadow: lineEnd ? `2px 0 0 0 ${palette.accent}` : "none",
     }} />
   );
 }
@@ -124,15 +126,18 @@ function GridViz({ cellStates, currentIdx, label, stats }) {
         border: `1px solid ${palette.border}`,
         width: "fit-content",
       }}>
-        {Array.from({ length: GRID * GRID }, (_, i) => (
-          <Cell key={i} state={cellStates[i]} isCurrent={i === currentIdx} />
-        ))}
+        {Array.from({ length: GRID * GRID }, (_, i) => {
+          const col = i % GRID;
+          const lineEnd = col % CACHE_LINE === CACHE_LINE - 1 && col !== GRID - 1;
+          return <Cell key={i} state={cellStates[i]} isCurrent={i === currentIdx} lineEnd={lineEnd} />;
+        })}
       </div>
       <div style={{
         marginTop: 6, fontSize: 11, color: palette.textDim, fontFamily: "monospace",
         display: "flex", gap: 4, alignItems: "center",
       }}>
-        <span>← メモリアドレス (行優先レイアウト) →</span>
+        <span>1マス=1要素。左→右→次の行 の順にメモリ連続
+          <span style={{ color: palette.accent }}>│</span> 縦線＝キャッシュライン境界（連続{CACHE_LINE}要素）</span>
       </div>
     </div>
   );
@@ -187,6 +192,64 @@ function Bar({ value, max, color, label, time }) {
           }}>{time}</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// アニメーションと同期して、いま実行中のループ・変数・キャッシュ判定を表示する
+function LiveCode({ phase, r, c, idx, state }) {
+  const idle = phase == null;
+  const isRow = phase === "row";
+  const tone = idle ? palette.textDim : isRow ? palette.hit : palette.miss;
+  const title = idle ? "待機中" : isRow ? "✅ 行優先を実行中" : "❌ 列優先を実行中";
+  const num = (v) => <b style={{ color: tone }}>{v}</b>;
+
+  return (
+    <div style={{
+      background: palette.surfaceAlt,
+      border: `1px solid ${idle ? palette.border : tone}`,
+      borderRadius: 8, padding: 14, marginBottom: 20,
+      fontFamily: "monospace", fontSize: 12.5, lineHeight: 1.8,
+      minHeight: 96,
+    }}>
+      <div style={{
+        color: tone, fontWeight: 700, marginBottom: 8,
+        fontFamily: "'Inter', -apple-system, sans-serif", fontSize: 12,
+      }}>
+        {title}
+      </div>
+
+      {idle ? (
+        <div style={{ color: palette.textDim, fontFamily: "'Inter', -apple-system, sans-serif" }}>
+          「▶ アニメーション開始」を押すと、ループ変数 r・c の動きと、各アクセスの
+          キャッシュ判定（ヒット / ミス）を 1 ステップずつ表示します。
+        </div>
+      ) : (
+        <div style={{ color: palette.text }}>
+          <div style={{ color: palette.textDim }}>
+            {isRow ? "for (r = 0; r < 12; r++)" : "for (c = 0; c < 12; c++)"}
+            {"  "}<span style={{ color: tone }}>// r = {num(r)}</span>
+          </div>
+          <div style={{ paddingLeft: 18, color: palette.textDim }}>
+            {isRow ? "for (c = 0; c < 12; c++)" : "for (r = 0; r < 12; r++)"}
+            {"  "}<span style={{ color: palette.current }}>
+              // {isRow ? "c" : "r"} = {num(isRow ? c : r)} ← {isRow ? "連続変化＝メモリも連続" : "+12 ずつ飛ぶ＝毎回別ライン"}
+            </span>
+          </div>
+          <div style={{ paddingLeft: 36 }}>
+            sum += arr[{num(r)}*12 + {num(c)}]
+            {"  →  "}arr[{num(idx)}]
+            {state && (
+              <span style={{
+                marginLeft: 10, fontWeight: 700,
+                color: state === "hit" ? palette.hit : palette.miss,
+              }}>
+                {state === "hit" ? "ヒット ✓" : "ミス ✗"}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -282,6 +345,14 @@ function CacheDemo() {
     }, 50);
   }, [benchSize]);
 
+  // 同期コード表示用：今アクティブなフェーズと現在の r, c, idx, 判定を求める
+  const liveIdx = rowCurrent >= 0 ? rowCurrent : colCurrent;
+  const livePhase = rowCurrent >= 0 ? "row" : colCurrent >= 0 ? "col" : null;
+  const liveR = liveIdx >= 0 ? Math.floor(liveIdx / GRID) : 0;
+  const liveC = liveIdx >= 0 ? liveIdx % GRID : 0;
+  const liveState = livePhase === "row" ? rowStates[liveIdx]
+    : livePhase === "col" ? colStates[liveIdx] : null;
+
   return (
     <div style={{
       fontFamily: "'Inter', -apple-system, sans-serif",
@@ -329,6 +400,9 @@ function CacheDemo() {
           {animating ? "■ 停止" : "▶ アニメーション開始"}
         </button>
 
+        {/* Live synced code */}
+        <LiveCode phase={livePhase} r={liveR} c={liveC} idx={liveIdx} state={liveState} />
+
         {/* Grids */}
         <div style={{
           display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 32,
@@ -358,6 +432,17 @@ function CacheDemo() {
           行優先でアクセスすると次の要素は<strong style={{ color: palette.text }}>同じキャッシュラインの中</strong>にあるためヒットする（空間的局所性）。
           一方、列優先だと毎回別のラインに飛ぶ。さらにキャッシュ<strong style={{ color: palette.text }}>容量は有限</strong>（このデモでは {CACHE_CAPACITY} ライン分）なので、
           一度読んだラインが<strong style={{ color: palette.text }}>再び使われる前に追い出されて</strong>しまい、ほぼ毎回ミスになる。
+          <div style={{
+            marginTop: 12, padding: "10px 12px", background: palette.surfaceAlt,
+            borderRadius: 6, fontFamily: "monospace", fontSize: 12, color: palette.text,
+            lineHeight: 1.7,
+          }}>
+            例：<b style={{ color: palette.current }}>arr[2][5]</b> は1次元メモリでは{" "}
+            <b style={{ color: palette.current }}>2*12 + 5 = 29</b> 番地。<br />
+            連続する <b style={{ color: palette.accent }}>28, 29, 30, 31</b> 番地が1キャッシュライン（連続{CACHE_LINE}要素）。<br />
+            <span style={{ color: palette.hit }}>行優先</span>：c を +1 → 30, 31 番地と<b>同じライン内</b>を読む（ヒット）。{" "}
+            <span style={{ color: palette.miss }}>列優先</span>：r を +1 → 29→41番地と<b>12個飛ぶ</b>（別ライン＝ミス）。
+          </div>
         </div>
 
         {/* Benchmark section */}
